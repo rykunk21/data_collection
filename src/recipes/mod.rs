@@ -1,17 +1,28 @@
 use regex::Regex;
-use reqwest::blocking::get;
+use reqwest::Client;
 use select::document::Document;
 use select::node::Node;
 use select::predicate::{Attr, Class, Name, Predicate};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
 use std::error::Error;
 use std::panic;
 
 use crate::utils::u32Ext;
 
-#[derive(Serialize, Deserialize, Debug, Default)]
+
+pub async fn fetch_data(url: &str) -> Result<String, reqwest::Error> {
+    let client = Client::new();
+    let res = client.get(url)
+        .send()
+        .await?;
+
+    let body = res.text().await?;
+    Ok(body)
+}
+
+
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
 struct Nutrient {
     unit: String,
     label: String,
@@ -19,7 +30,7 @@ struct Nutrient {
     daily: f64,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
 #[allow(non_snake_case)]
 struct Macros {
     PROCNT: Nutrient,
@@ -52,6 +63,7 @@ struct Macros {
     FAMS: Nutrient,
     FAPU: Nutrient,
 }
+
 impl Macros {
     pub fn normalize_by_servings(&mut self, servings: u64) -> () {
         let nutrients = vec![
@@ -94,7 +106,7 @@ impl Macros {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 enum Unit {
     TABLESPOON,
     TEASPOON,
@@ -116,13 +128,13 @@ impl Unit {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Instruction {
-    section: Option<String>,
-    steps: Vec<String>,
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Instruction {
+    pub section: Option<String>,
+    pub steps: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct Ingredient {
     name: String,
     quantity: f32,
@@ -170,19 +182,19 @@ struct Ingredient {
 /// The `new` function may return an error if there are issues parsing the recipe data.
 /// This could occur if any of the fields cannot be properly extracted or parsed during
 /// initialization.
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct Recipe {
     img: String,
-    url: String,
+    pub url: String,
     cuisine: String,
     category: String,
     method: String,
     total_time: u32,
     prep_time: u32,
     cook_time: u32,
-    name: String,
+    pub name: String,
     description: Option<String>,
-    instructions: Vec<Instruction>,
+    pub instructions: Vec<Instruction>,
     ingredients: Vec<Ingredient>,
     video: Option<String>,
     notes: Option<String>,
@@ -192,6 +204,15 @@ pub struct Recipe {
 }
 
 impl Recipe {
+    /// Loads a new recipe from the database
+    pub fn from_id(id: u64) -> Self {
+
+        Recipe {
+            url: "someurl".to_string(),
+            ..Default::default()
+        }
+    }
+
     /// Creates a new `Recipe` instance from an image URL and a recipe URL.
     ///
     /// This method initializes the `Recipe` struct with the provided image and URL.
@@ -216,13 +237,13 @@ impl Recipe {
     /// # Errors
     ///
     /// If parsing the recipe fails (e.g., missing data, invalid format), this function returns an error.
-    pub fn new(img: &str, url: &str) -> Result<Self, Box<dyn Error>> {
+    pub async fn new(img: &str, url: &str) -> Result<Self, Box<dyn Error>> {
         let mut r = Recipe {
             img: img.into(),
             url: url.into(),
             ..Default::default()
         };
-        match r.parse_recipe() {
+        match r.parse_recipe().await {
             Ok(()) => return Ok(r),
             Err(e) => return Err(e),
         }
@@ -233,10 +254,10 @@ impl Recipe {
     /// Constructing a recipe instance queries the url and extracts the
     /// relevant data into the recipe strcut. Parsing this information is a
     /// lot of work, which this function handles
-    fn parse_recipe(&mut self) -> Result<(), Box<dyn Error>> {
+    async fn parse_recipe(&mut self) -> Result<(), Box<dyn Error>> {
         // The document represents the page as whole, starts enabling `find` capabilities
         let document =
-            get_document(&self.url).expect("Failed to parse document while building a recipe type");
+            get_document(&self.url).await?;
 
         let mut id = document
             .find(Class("tasty-recipes-jump-link"))
@@ -357,7 +378,7 @@ impl Recipe {
                 .next()
                 .and_then(|nut| nut.attr("data-l-src"))
             {
-                self.get_macros(format!("https:{}", nutrition_url).as_str())?;
+                self.get_macros(format!("https:{}", nutrition_url).as_str()).await?;
             } else {
                 self.macros = None
             }
@@ -426,11 +447,11 @@ impl Recipe {
                     None => span
                         .find(Name("span"))
                         .next()
-                        .expect("Cant parse inner span")
+                        .ok_or("Could not parse inner span")? 
                         .attr("data-amount")
-                        .unwrap()
-                        .parse::<f32>()
-                        .unwrap(),
+                        .ok_or("Could not parse inner span")?
+                        .parse::<f32>()?
+                     
                 };
 
                 let units = span.attr("data-unit").and_then(|u| match Unit::from(u) {
@@ -504,9 +525,15 @@ impl Recipe {
     /// - `Result<(), Box<dyn Error>>`: Returns `Ok(())` on success, or an error if parsing fails.
     fn parse_instructions(&mut self, list: &Node) -> Result<(), Box<dyn Error>> {
         // "https://www.aheadofthyme.com/easy-meat-lasagna/" for some reason not grabbing all instructions, but other similar examples are
-
         let h4_blocks: Vec<_> = list.find(Name("h4")).collect();
-        let mut ol_blocks: Vec<_> = list.find(Name("ol")).collect();
+
+        let mut ol_blocks: Vec<_> = list
+            .find(Name("div"))
+            .nth(1)
+            .expect("Could not find nth child in parse instructions")
+            .children()
+            .filter(|child| child.name() == Some("ol"))
+            .collect();
 
         if ol_blocks.len() == 1 {
             // we have 1 ol block
@@ -528,6 +555,7 @@ impl Recipe {
                 };
                 instructions.push(instruction);
             }
+
             self.instructions = instructions;
         }
 
@@ -542,8 +570,8 @@ impl Recipe {
     ///
     /// # Returns
     /// - `Result<(), Box<dyn Error>>`: Returns `Ok(())` on success, or an error if parsing fails.
-    fn get_macros(&mut self, url: &str) -> Result<(), Box<dyn Error>> {
-        let document = get_document(url).expect("Failed to get url");
+    async fn get_macros(&mut self, url: &str) -> Result<(), Box<dyn Error>> {
+        let document = get_document(url).await?;
 
         if let Some(data) = document.find(Name("script")).next() {
             let re = Regex::new(r"var preloaded = \{'recipe': (.*)\}")?;
@@ -637,7 +665,7 @@ impl Recipe {
 /// # Panics
 ///
 /// This function will not panic under normal circumstances.
-pub fn get_recipes(document: &Document) -> Vec<Recipe> {
+pub async fn get_recipes(document: &Document) -> Vec<Recipe> {
     let mut out: Vec<Recipe> = Vec::new();
 
     if let Some(entry_content) = document
@@ -657,7 +685,7 @@ pub fn get_recipes(document: &Document) -> Vec<Recipe> {
 
             // Only push if both `url` and `img` are available
             if let (Some(url), Some(img)) = (url, img) {
-                match Recipe::new(&img, &url) {
+                match Recipe::new(&img, &url).await {
                     Ok(r) => {
                         out.push(r);
                     }
@@ -711,45 +739,55 @@ pub fn get_recipes(document: &Document) -> Vec<Recipe> {
 /// # Panics
 ///
 /// This function will not panic under normal circumstances, as it uses error handling to report issues.
-pub fn get_document(url: &str) -> Result<Document, Box<dyn Error>> {
-    let response = reqwest::blocking::get(url)
-        .map_err(|e| format!("Request failed: {}", e))?
-        .text()
-        .map_err(|e| format!("Failed to read response text: {}", e))?;
-
+pub async fn get_document(url: &str) -> Result<Document, Box<dyn Error>> {
+    let response = fetch_data(url).await?;
+    
     // Convert the HTML string into a Document
     Ok(Document::from(response.as_str()))
+}
+
+
+pub async fn get_recipe_test(id: u8) -> Recipe {
+    
+    let img = "";
+
+    let url = "https://www.aheadofthyme.com/easy-meat-lasagna/";
+
+    Recipe::new(img, url).await.expect("Failed to get recipe")
+
+
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn test_get_recipes() -> Result<(), Box<dyn std::error::Error>> {
-        let document = get_document("https://www.aheadofthyme.com/30-best-shrimp-recipes/")
-            .expect("Failed to get url");
+    #[tokio::test]
+    #[ignore]
+    async fn test_get_recipes() -> Result<(), Box<dyn std::error::Error>> {
+        let document = get_document("https://www.aheadofthyme.com/30-best-shrimp-recipes/").await?;
+            
 
         // Assuming `get_recipe_urls` is a function that takes a `Document` and returns URLs
-        let urls = get_recipes(&document);
+        let urls = get_recipes(&document).await;
 
         println!("{:#?}", &urls[..5]);
         // Continue with your logic, parsing `response`, etc.
         Ok(())
     }
 
-    #[test]
-    fn test_parse_recipe() {
+    #[tokio::test]
+    async fn test_parse_recipe() {
         let img = "";
 
         let url = "https://www.aheadofthyme.com/easy-meat-lasagna/";
 
-        let r = Recipe::new(img, url);
+        let r = Recipe::new(img, url).await.expect("Failed to get recipe");
 
         println!("{:#?}", r);
     }
 
-    #[test]
-    fn test_get_macros() {
+    #[tokio::test]
+    async fn test_get_macros() {
         let img = "";
 
         let url = "https://nutrifox.com/embed/label/121461";
@@ -757,7 +795,7 @@ mod tests {
         let mut r = Recipe {
             ..Default::default()
         };
-        r.get_macros(&url).expect("Failed to get macros");
+        r.get_macros(&url).await.expect("Failed to get macros");
 
         println!("{:#?}", r);
     }

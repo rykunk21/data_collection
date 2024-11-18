@@ -28,5 +28,6 @@ impl u32Ext for u32 {
 
 #[cfg(test)]
 mod tests {
+    
     use super::*;
 }
