@@ -1,10 +1,9 @@
 use serde::{Deserialize, Serialize};
 use surrealdb::opt::auth::Root;
 use surrealdb::{
-    engine::remote::ws::{Ws, Client},
-    Connection, Surreal,
+    engine::remote::ws::{Client, Ws},
+    Surreal,
 };
-use tokio;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct Example {
@@ -52,19 +51,24 @@ mod tests {
             .await
             .expect("Failed to create and insert example in the db");
 
-        assert_eq!(ex, Some(Example{data1: 1, data2:2 ,data3: 3}));
-
-    }
-
-    #[tokio::test]
-    async fn read_example() {
-
-        let db = conn().await.expect("Failed to connect to db:");
+        assert_eq!(
+            ex,
+            Some(Example {
+                data1: 1,
+                data2: 2,
+                data3: 3
+            })
+        );
 
         let ex: Vec<Example> = db.select("ex").await.expect("Failed to retrieve ex");
-        
-        assert_eq!(ex, vec![Example{data1: 1, data2:2 ,data3: 3}]);
 
-
+        assert_eq!(
+            ex,
+            vec![Example {
+                data1: 1,
+                data2: 2,
+                data3: 3
+            }]
+        );
     }
 }

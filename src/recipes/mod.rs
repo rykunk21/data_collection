@@ -8,19 +8,15 @@ use serde_json::Value;
 use std::error::Error;
 use std::panic;
 
-use crate::utils::u32Ext;
-
+use crate::utils::U32Ext;
 
 pub async fn fetch_data(url: &str) -> Result<String, reqwest::Error> {
     let client = Client::new();
-    let res = client.get(url)
-        .send()
-        .await?;
+    let res = client.get(url).send().await?;
 
     let body = res.text().await?;
     Ok(body)
 }
-
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 struct Nutrient {
@@ -205,8 +201,7 @@ pub struct Recipe {
 
 impl Recipe {
     /// Loads a new recipe from the database
-    pub fn from_id(id: u64) -> Self {
-
+    pub fn from_id(_id: u64) -> Self {
         Recipe {
             url: "someurl".to_string(),
             ..Default::default()
@@ -256,8 +251,7 @@ impl Recipe {
     /// lot of work, which this function handles
     async fn parse_recipe(&mut self) -> Result<(), Box<dyn Error>> {
         // The document represents the page as whole, starts enabling `find` capabilities
-        let document =
-            get_document(&self.url).await?;
+        let document = get_document(&self.url).await?;
 
         let mut id = document
             .find(Class("tasty-recipes-jump-link"))
@@ -378,7 +372,8 @@ impl Recipe {
                 .next()
                 .and_then(|nut| nut.attr("data-l-src"))
             {
-                self.get_macros(format!("https:{}", nutrition_url).as_str()).await?;
+                self.get_macros(format!("https:{}", nutrition_url).as_str())
+                    .await?;
             } else {
                 self.macros = None
             }
@@ -447,11 +442,10 @@ impl Recipe {
                     None => span
                         .find(Name("span"))
                         .next()
-                        .ok_or("Could not parse inner span")? 
+                        .ok_or("Could not parse inner span")?
                         .attr("data-amount")
                         .ok_or("Could not parse inner span")?
-                        .parse::<f32>()?
-                     
+                        .parse::<f32>()?,
                 };
 
                 let units = span.attr("data-unit").and_then(|u| match Unit::from(u) {
@@ -741,21 +735,17 @@ pub async fn get_recipes(document: &Document) -> Vec<Recipe> {
 /// This function will not panic under normal circumstances, as it uses error handling to report issues.
 pub async fn get_document(url: &str) -> Result<Document, Box<dyn Error>> {
     let response = fetch_data(url).await?;
-    
+
     // Convert the HTML string into a Document
     Ok(Document::from(response.as_str()))
 }
 
-
-pub async fn get_recipe_test(id: u8) -> Recipe {
-    
+pub async fn get_recipe_test(_id: u8) -> Recipe {
     let img = "";
 
     let url = "https://www.aheadofthyme.com/easy-meat-lasagna/";
 
     Recipe::new(img, url).await.expect("Failed to get recipe")
-
-
 }
 
 #[cfg(test)]
@@ -765,7 +755,6 @@ mod tests {
     #[ignore]
     async fn test_get_recipes() -> Result<(), Box<dyn std::error::Error>> {
         let document = get_document("https://www.aheadofthyme.com/30-best-shrimp-recipes/").await?;
-            
 
         // Assuming `get_recipe_urls` is a function that takes a `Document` and returns URLs
         let urls = get_recipes(&document).await;
@@ -788,8 +777,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_macros() {
-        let img = "";
-
         let url = "https://nutrifox.com/embed/label/121461";
 
         let mut r = Recipe {
