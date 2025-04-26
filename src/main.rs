@@ -5,7 +5,8 @@ use data_collection::recipes::*;
 async fn main() {
     let db = db::conn().await.expect("Failed to connect to DB: ");
 
-    let document = match get_document("https://www.aheadofthyme.com/40-best-salad-recipes/").await {
+    let document = match get_document("https://www.aheadofthyme.com/50-best-italian-recipes").await
+    {
         Ok(doc) => doc,
         Err(_) => panic!("Cannot get doc!"),
     };
